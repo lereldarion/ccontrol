@@ -10,7 +10,7 @@ AC_CONFIG_AUX_DIR([build-aux])
 AC_CONFIG_MACRO_DIR([m4])
 
 # automake should fail on any error
-AM_INIT_AUTOMAKE([-Wall -Werror foreign])
+AM_INIT_AUTOMAKE([-Wall -Werror foreign subdir-objects])
 # check for programs
 AC_LANG_C
 AC_GNU_SOURCE
@@ -19,6 +19,7 @@ AC_PROG_CC_C_O
 AM_PROG_CC_C_O
 AC_PROG_CC_STDC
 AC_PROG_CPP
+AM_PROG_AR
 AC_PROG_LIBTOOL
 
 # support for testing with valgrind

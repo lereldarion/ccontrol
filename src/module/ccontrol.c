@@ -220,7 +220,11 @@ int colored_mmap(struct file *filp, struct vm_area_struct *vma)
 		return -EPERM;
 	}
 	vma->vm_ops = &colored_vm_ops;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,7,0)
 	vma->vm_flags |= VM_RESERVED | VM_CAN_NONLINEAR;
+#else
+	vma->vm_flags |= VM_IO;
+#endif
 	vma->vm_private_data = filp->private_data;
 	printk(KERN_INFO "ccontrol: mmap ok\n");
 	return 0;
