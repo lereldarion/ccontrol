@@ -21,6 +21,11 @@ AC_PROG_CC_STDC
 AC_PROG_CPP
 AM_PROG_AR
 AC_PROG_LIBTOOL
+PKG_PROG_PKG_CONFIG
+PKG_CHECK_VAR([with_udevrulesdir],[udev],[udevdir])
+
+# pkg-config
+PKG_INSTALLDIR
 
 # support for testing with valgrind
 AC_ARG_ENABLE(valgrind,
@@ -34,6 +39,12 @@ if [[ "x$valgrind" = xtrue ]]; then
 	fi
 fi
 AM_CONDITIONAL([TEST_VALGRIND],[test "x$valgrind" = xtrue])
+
+# Udev rules dir
+AC_ARG_WITH([udevdir],
+AS_HELP_STRING([--with-udevrulesdir=DIR],[Directory for udev rules]),
+[with_udevrulesdir="$withval"])
+AC_SUBST([udevrulesdir],['${with_udevrulesdir}/rules.d'])
 
 # configuration output in config.h
 AC_CONFIG_HEADERS([config.h])

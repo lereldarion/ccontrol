@@ -1,7 +1,8 @@
 ACLOCAL_AMFLAGS = -I m4
-SUBDIRS = src tests
+SUBDIRS = src tests 
 
-pkgconfigdir = $(libdir)/pkgconfig
 pkgconfig_DATA = ccontrol.pc
+
+udevrules_DATA = 99-ccontrol.rules
 
 EXTRA_DIST = autogen.sh version.sh ChangeLog ccontrol.pc

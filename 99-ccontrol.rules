@@ -1,0 +1,2 @@
+# Give user permissions for ccontrol dev file
+KERNEL=="ccontrol", NAME="ccontrol", MODE="0666"

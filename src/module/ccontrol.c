@@ -46,7 +46,7 @@ module_param(colors,uint,0);
 MODULE_PARM_DESC(colors,"How many colors are available in cache.");
 /* need it global because of cleanup code */
 static unsigned int order = 0;
-static struct class *ccontrol_class;
+static struct class *ccontrol_class = NULL;
 
 /* helper functions for color management */
 static inline unsigned int pfn_to_color(unsigned long pfn)
@@ -75,7 +75,7 @@ static inline unsigned int pfn_to_color(unsigned long pfn)
  * are colored ones.
  */
 #define MAX_DEVICES 64
-#define DEVICES_DEFAULT_VALUE (MKDEV(MAJOR(MAJOR_NUM),MINOR(0)))
+#define DEVICES_DEFAULT_VALUE (MKDEV(MAJOR(0),MINOR(0)))
 static dev_t devices_id = DEVICES_DEFAULT_VALUE;
 DECLARE_BITMAP(devmap,MAX_DEVICES);
 
@@ -259,9 +259,7 @@ int create_colored(struct colored_dev **dev, color_set cset, size_t size)
 		return -ENOMEM;
 	}
 	/* convert size to num pages */
-	if(size % PAGE_SIZE != 0)
-		size += PAGE_SIZE - (size % PAGE_SIZE);
-	size = size / PAGE_SIZE;
+	size = (size + PAGE_SIZE - 1) / PAGE_SIZE; // divide and round up
 
 	(*dev)->pages = vmalloc(sizeof(struct page *)*size);
 	if((*dev)->pages == NULL)
@@ -558,6 +556,8 @@ int alloc_devices(void)
 {
 	int err;
 	dev_t devno;
+	struct device * sys_device;
+	cdev_init(&control.cdev,&control_fops);
 
 	/* allocate character device numbers */
 	err = alloc_chrdev_region(&devices_id,0,MAX_DEVICES,"ccontrol");
@@ -570,27 +570,36 @@ int alloc_devices(void)
 
 	/* create first device */
 	devno = MKDEV(MAJOR(devices_id),MINOR(devices_id));
-	cdev_init(&control.cdev,&control_fops);
 	control.cdev.owner = THIS_MODULE;
-	control.cdev.ops = &control_fops;
 	err = cdev_add(&control.cdev, devno,1);
 	if(err)
 	{
 		printk(KERN_ERR "Error %d adding control device.\n",err);
-		goto error;
+		goto free_chrdev_region;
 	}
 	ccontrol_class = class_create(THIS_MODULE,"ccontrol");
 	if(IS_ERR(ccontrol_class))
 	{
-		printk(KERN_ERR "Error create ccontrol class.\n");
-		cdev_del(&control.cdev);
 		err = PTR_ERR(ccontrol_class);
-		goto error;
+		printk(KERN_ERR "Error %d create ccontrol class.\n", err);
+		goto free_cdev;
 	}
-	device_create(ccontrol_class,NULL, devno,NULL,"ccontrol");
+	sys_device = device_create(ccontrol_class,NULL, devno,NULL,"ccontrol");
+	if (IS_ERR(sys_device))
+	{
+		err = PTR_ERR(sys_device);
+		printk(KERN_ERR "Error %d create sys device.\n", err);
+		goto free_class;
+	}
 	bitmap_zero(devmap,MAX_DEVICES);
 	return 0;
-error:
+
+free_class:
+	class_destroy(ccontrol_class);
+free_cdev:
+	ccontrol_class = NULL;
+	cdev_del(&control.cdev);
+free_chrdev_region:
 	unregister_chrdev_region(devices_id,MAX_DEVICES);
 	devices_id = DEVICES_DEFAULT_VALUE;
 	return err;
@@ -610,13 +619,14 @@ void clean_devices(void)
 	}
 
 	/* free the device number region */
-	if(devices_id != DEVICES_DEFAULT_VALUE)
+	if (ccontrol_class != NULL)
 	{
-		device_destroy(ccontrol_class,MKDEV(MAJOR_NUM,0));
+		device_destroy(ccontrol_class,devices_id);
 		class_destroy(ccontrol_class);
-		cdev_del(&control.cdev);
-		unregister_chrdev_region(devices_id,MAX_DEVICES);
 	}
+	cdev_del(&control.cdev);
+	if(devices_id != DEVICES_DEFAULT_VALUE)
+		unregister_chrdev_region(devices_id,MAX_DEVICES);
 }
 
 /* reserves physical memory */
