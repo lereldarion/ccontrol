@@ -4,19 +4,19 @@
  * published by the Free Software Foundation, version 2 of the
  * License.
  *
- * Copyright (C) 2010 Swann Perarnau
- * Author: Swann Perarnau <swann.perarnau@imag.fr>
+ * Copyright (C) 2010 Swann Perarnau <swann.perarnau@imag.fr>
+ * Copyright (C) 2015 Francois Gindraud <francois.gindraud@inria.fr>
  */
 
-#include"ccontrol.h"
+#include "ccontrol.h"
 
-#include<ctype.h>
-#include<errno.h>
-#include<stdio.h>
-#include<stdlib.h>
-#include<string.h>
-#include<sys/mman.h>
-#include<unistd.h>
+#include <ctype.h>
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <unistd.h>
 
 /* Dynamic memory allocations bypass : this code
  * redefines malloc, calloc, realloc and free to provide
@@ -29,20 +29,8 @@
  * CCONTROL_SIZE: gives the allocation size to ask.
  */
 
-extern struct ccontrol_zone local_zone;
-unsigned short init_ok = 0;
-unsigned short in_init = 0;
-
-static void cleanup()
-{
-	int err;
-	if(init_ok) {
-		err = ccontrol_destroy_zone(&local_zone);
-		if(err)
-			_exit(EXIT_FAILURE);
-		init_ok = 0;
-	}
-}
+static struct ccontrol_area * process_area = NULL;
+static int in_init = 0;
 
 static void init()
 {
@@ -53,13 +41,7 @@ static void init()
 
 	in_init = 1;
 
-	/* setup cleanup code */
-	err = atexit(&cleanup);
-	if(err)
-	{
-		perror("ccontrol: installing cleanup code");
-		exit(EXIT_FAILURE);
-	}
+	/* No cleanup as it is automatic */
 
 	/* load environment variables */
 	env_pset = getenv(CCONTROL_ENV_PARTITION_COLORSET);
@@ -94,14 +76,13 @@ static void init()
 	}
 
 	/* allocate zone */
-	err = ccontrol_create_zone(&local_zone,&c,size);
-	if(err)
+	process_area = ccontrol_create (size, &c);
+	if(process_area == NULL)
 	{
 		fprintf(stderr,"ccontrol: failed to allocate global zone\n");
 		exit(EXIT_FAILURE);
 	}
 	in_init = 0;
-	init_ok = 1;
 }
 
 #define MMAP(s) mmap(NULL,s,PROT_READ|PROT_WRITE|PROT_EXEC,MAP_PRIVATE|MAP_ANONYMOUS,-1,0)
@@ -109,18 +90,18 @@ void * malloc(size_t size)
 {
 	if(in_init)
 		return MMAP(size);
-	if(!init_ok)
+	if(process_area == NULL)
 		init();
-	return ccontrol_malloc(&local_zone,size);
+	return ccontrol_malloc (process_area, size);
 }
 
 void free(void * ptr)
 {
 	if(in_init)
 		return;
-	if(!init_ok)
+	if(process_area == NULL)
 		init();
-	ccontrol_free(&local_zone,ptr);
+	ccontrol_free (process_area, ptr);
 }
 
 void * realloc(void *ptr, size_t size)
@@ -130,9 +111,9 @@ void * realloc(void *ptr, size_t size)
 		void *r = MMAP(size);
 		return memcpy(r,ptr,size);
 	}
-	if(!init_ok)
+	if(process_area == NULL)
 		init();
-	return ccontrol_realloc(&local_zone,ptr,size);
+	return ccontrol_realloc(process_area, ptr, size);
 }
 
 void * calloc(size_t nm, size_t size)
@@ -143,9 +124,8 @@ void * calloc(size_t nm, size_t size)
 
 	if(in_init)
 		return MMAP(nm*size);
-	if(!init_ok)
+	if(process_area == NULL)
 		init();
-
 
 	p = malloc(nm*size);
 	if(p != NULL)

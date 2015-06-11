@@ -54,6 +54,11 @@ static inline unsigned int pfn_to_color(unsigned long pfn)
 	return pfn%colors;
 }
 
+static inline unsigned int divide_round_up (unsigned int a, unsigned int b)
+{
+	return (a + b - 1) / b;
+}
+
 /* devices structures:
  * two types of devices are handled for ccontrol:
  *   - the control device which is always present.
@@ -68,6 +73,9 @@ static inline unsigned int pfn_to_color(unsigned long pfn)
  * for now.
  * Permission to access the device are not implemented.
  */
+
+//TODO progressive init
+//TODO ioctl to get params
 
 /* this saves major and minor device numbers
  * used by all our devices.
@@ -206,7 +214,7 @@ int colored_mmap(struct file *filp, struct vm_area_struct *vma)
 
 	// check size is ok
 	size = (vma->vm_end - vma->vm_start)/PAGE_SIZE;
-	printk(KERN_INFO "ccontrol: mmap size %zu, available %u.\n",
+	printk(KERN_INFO "ccontrol: mmap size (pages) %zu, available %u.\n",
 			size, dev->nbpages);
 	if(size > dev->nbpages)
 	{
@@ -259,7 +267,7 @@ int create_colored(struct colored_dev **dev, color_set cset, size_t size)
 		return -ENOMEM;
 	}
 	/* convert size to num pages */
-	size = (size + PAGE_SIZE - 1) / PAGE_SIZE; // divide and round up
+	size = divide_round_up (size, PAGE_SIZE);
 
 	(*dev)->pages = vmalloc(sizeof(struct page *)*size);
 	if((*dev)->pages == NULL)
@@ -705,10 +713,7 @@ static int __init init(void)
 	memory = memparse(mem,NULL);
 
 	// compute the number of blocks we should allocate to reserve enough memory.
-	blocks = memory / (PAGE_SIZE * (1<<order));
-	if(blocks * (PAGE_SIZE * (1<<order)) < memory)
-		blocks++;
-
+	blocks = divide_round_up (memory, PAGE_SIZE << order);
 	printk(KERN_DEBUG "ccontrol: will allocate %d blocks of order %d.\n",blocks,order);
 
 	/* clear control struct, this must be done before any errors */

@@ -4,235 +4,265 @@
  * published by the Free Software Foundation, version 2 of the
  * License.
  *
- * Copyright (C) 2010 Swann Perarnau
- * Author: Swann Perarnau <swann.perarnau@imag.fr>
+ * Copyright (C) 2010 Swann Perarnau <swann.perarnau@imag.fr>
+ * Copyright (C) 2015 Francois Gindraud <francois.gindraud@inria.fr>
  */
-#include"ccontrol.h"
-#include"freelist.h"
-#include"ioctls.h"
+#include "ccontrol.h"
+#include "freelist.h"
+#include "ioctls.h"
 
-#include<fcntl.h>
-#include<stdio.h>
-#include<string.h>
-#include<sys/ioctl.h>
-#include<sys/mman.h>
-#include<sys/types.h>
-#include<sys/stat.h>
-#include<unistd.h>
-#include<errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <assert.h>
+#include <errno.h>
+#include <error.h>
 
-#define DEVICE_NAMELENGTH 80
-#define DEVICE_NAMEPREFIX MODULE_CONTROL_DEVICE
-/* this library could possibly be made faster if it wasn't opening the control
- * device each time you want to create a zone.
- */
+//#include <string.h>
 
-struct ccontrol_zone {
-	int fd; /* the file description associated with the mmap */
-	void *p; /* the pointer to the beginning of the mmap */
-	size_t size; /* the size of the mmap */
-	dev_t dev; /* the device number of the zone */
+#define FATAL_ERROR_AT(s, ...) error_at_line (EXIT_FAILURE, errno, __FILE__, __LINE__, s,##__VA_ARGS__)
+#define ERROR_AT(s, ...) error_at_line (0, errno, __FILE__, __LINE__, s,##__VA_ARGS__)
+
+struct ccontrol_area {
+	struct ccontrol_area * next; /* list of opened areas for cleanup */
+	dev_t dev; /* colored device number */
+	int fd; /* file descriptor of colored device */
+	void * start; /* mmaped region start */
+	size_t size; /* area size */
 };
 
-/* needed by libc_bypass code */
-struct ccontrol_zone local_zone = { -1, NULL, 0, 0};
+/* lib utils */
 
-struct ccontrol_zone * ccontrol_new(void)
-{
-	struct ccontrol_zone *z;
-	z = (struct ccontrol_zone *) malloc(sizeof(struct ccontrol_zone));
-	if(z == NULL)
-		return NULL;
-	z->fd = -1;
-	z->p = NULL;
-	z->size = 0;
-	return z;
+#define CONTROL_DEVICE "/dev/ccontrol"
+
+#if defined(P_tmpdir)
+#define COLORED_DEVICE_DIR P_tmpdir
+#else
+#define COLORED_DEVICE_DIR "/tmp"
+#endif
+
+static void colored_device_name (char * buf, int buf_size, dev_t dev) {
+	int snp = snprintf (buf, buf_size, "%s/ccontrol-colored-%d", COLORED_DEVICE_DIR, minor (dev));
+	assert (snp >= 0 && snp <= buf_size);
 }
 
-void ccontrol_delete(struct ccontrol_zone *p)
-{
-	free(p);
-}
-
-size_t ccontrol_memsize2zonesize(unsigned int nballoc, size_t memsize)
-{
-	return memsize + ALLOCATOR_OVERHEAD + HEADER_SIZE*(nballoc-1);
-}
-
-int ccontrol_create_zone(struct ccontrol_zone *z, color_set *c, size_t size)
-{
-	int fd_cc,err = 0;
-	ioctl_args io_args;
-	char filename[DEVICE_NAMELENGTH];
-	dev_t dev;
-	if(z == NULL || c == NULL)
-		return 1;
-	/* open the module control device */
-	fd_cc = open(MODULE_CONTROL_DEVICE, O_RDWR | O_NONBLOCK);
-	if(fd_cc == -1)
-	{
-		perror("module control device open:");
-		return 1;
-	}
-	/* tell him to create a new zone */
-	io_args.size = size;
-	io_args.c = *c;
-	err = ioctl(fd_cc,IOCTL_NEW,&io_args);
-	if(err == -1)
-	{
-		perror("module control device ioctl:");
-		err = 1;
-		goto close_control;
-	}
-	/* on succes, we need to create the device and mmap to it */
-	/* create a name */
-	snprintf(filename,DEVICE_NAMELENGTH,"%s%d",DEVICE_NAMEPREFIX,io_args.minor);
-	dev = makedev(io_args.major,io_args.minor);
-	err = mknod(filename,S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP,dev);
-	if(err == -1)
-	{
-		perror("module color device mknod:");
-		err = 1;
-		goto clean_ioctl;
-	}
-	z->fd = open(filename,O_RDWR);
-	if(z->fd == -1)
-	{
-		perror("module color device open:");
-		err = 1;
-		goto clean_node;
-	}
-	z->p = mmap(NULL,size,PROT_READ | PROT_WRITE, MAP_SHARED, z->fd,0);
-	if(z->p == MAP_FAILED)
-	{
-		perror("module color device mmap:");
-		err = 1;
-		goto close_color;
-	}
-	/* initialize the freelist */
-	fl_init(z->p,size);
-	z->size = size;
-	z->dev = dev;
-	err = 0;
-	goto close_control;
-
-close_color:
-	close(z->fd);
-clean_node:
-	unlink(filename);
-clean_ioctl:
-	/* if something went wrong after ioctl, we need to tell the kernel to destroy
-	 * the new device
-	 */
-	ioctl(fd_cc,IOCTL_FREE,&io_args);
-close_control:
-	close(fd_cc);
-
-	return err;
-}
-
-/* this function destroys a zone and its associated device.
- * Since most errors are unrecoverable, we just fall through
- * each error code, trying to clean everything whatever happens.
+/* ccontrol control device will be opened only once, and closed at end of program.
+ * It also acts as an init flag, with lazy initialization (by get_control_fd)
+ *
+ * opened_areas stores alive areas for collection at program end.
+ * ccontrol_create adds its area to the list, and ccontrol_destroy removes it.
  */
-int ccontrol_destroy_zone(struct ccontrol_zone *z)
+static int control_device_fd = -1;
+static struct ccontrol_area * opened_areas = NULL;
+
+static void lib_cleanup (void) {
+	while (opened_areas != NULL)
+		ccontrol_destroy (opened_areas);
+
+	if (control_device_fd != -1) {
+		close (control_device_fd);
+		control_device_fd = -1;
+	}
+}
+
+static int get_control_fd (void) {
+	if (control_device_fd == -1) {
+		// register cleanup function
+		if (atexit (lib_cleanup) != 0)
+			FATAL_ERROR_AT ("registering lib cleanup function");
+		// open control device
+		control_device_fd = open (CONTROL_DEVICE, O_RDWR | O_NONBLOCK);
+		if (control_device_fd == -1)
+			FATAL_ERROR_AT ("control device open (%s)", CONTROL_DEVICE);
+	}
+	return control_device_fd;
+}
+
+/* area creation / destruction */
+
+struct ccontrol_area * ccontrol_create (size_t size, color_set * colors) {
+	if(colors == NULL || size == 0)
+		return NULL;
+	int control_fd = get_control_fd ();
+	struct ccontrol_area * area = malloc (sizeof (struct ccontrol_area));
+	if (area == NULL) {
+		ERROR_AT ("malloc");
+		return NULL;
+	}
+	area->size = size;
+
+	ioctl_args io_args = {
+		.size = size,
+		.c = *colors
+	};
+	if (ioctl(control_fd, IOCTL_NEW, &io_args) == 0) {
+		// create colored device file for the new colored device
+		const int buf_size = 200; char buf[buf_size];
+		area->dev = makedev (io_args.major, io_args.minor);
+		colored_device_name (buf, buf_size, area->dev);
+		if (mknod (buf, S_IFCHR | S_IRUSR | S_IWUSR, area->dev) == 0) {
+			// open device
+			area->fd = open (buf, O_RDWR);
+			if (area->fd != -1) {
+				// mmap colored device
+				area->start = mmap (NULL, area->size, PROT_READ | PROT_WRITE, MAP_SHARED, area->fd, 0); // FIXME private mapping ?
+				if (area->start != MAP_FAILED) {
+					// TODO remove
+					fl_init(area->start, size); // init freelist
+
+					// add to cleanup list
+					area->next = opened_areas;
+					opened_areas = area;
+
+					return area;
+				} else {
+					ERROR_AT ("colored device mmap (f=%s, s=%lu)", buf, size);
+				}
+				close (area->fd);
+			} else {
+				ERROR_AT ("colored device open (f=%s)", buf);
+			}
+			unlink (buf);
+		} else {
+			ERROR_AT ("colored device mknod (f=%s, dev=%d:%d)", buf, io_args.major, io_args.minor);
+		}
+		ioctl (control_fd, IOCTL_FREE, &io_args);
+	} else {
+		ERROR_AT ("control device ioctl_new");
+	}
+	free (area);
+	return NULL;
+}
+
+int ccontrol_destroy (struct ccontrol_area * area)
 {
-	int fd_cc,err = 0;
-	ioctl_args io_args;
-	char filename[DEVICE_NAMELENGTH];
-	if(z == NULL)
-		return 1;
-	/* unmap the device */
-	err = munmap(z->p,z->size);
-	if(err == -1)
-		perror("module color device munmap:");
-	/* close the device */
-	err = close(z->fd);
-	if(err == -1)
-		perror("module color device close:");
-	/* open the module control device */
-	fd_cc = open(MODULE_CONTROL_DEVICE, O_RDWR | O_NONBLOCK);
-	if(fd_cc == -1)
-	{
-		perror("module control device open:");
-		return 1;
+	if (area == NULL)
+		return -1;
+	int err = 0;
+
+	// unmap, close and delete colored device file
+	if (munmap (area->start, area->size) == -1) {
+		err = -1;
+		ERROR_AT ("colored device munmap");
 	}
-	/* create a name */
-	snprintf(filename,DEVICE_NAMELENGTH,"%s%d",DEVICE_NAMEPREFIX,minor(z->dev));
-	/* unlink it */
-	unlink(filename);
-	/* now destroy the device */
-	io_args.major = major(z->dev);
-	io_args.minor = minor(z->dev);
-	err = ioctl(fd_cc,IOCTL_FREE,&io_args);
-	if(err == -1)
-	{
-		perror("module control device ioctl:");
-		err = 1;
+	if (close (area->fd) == -1) {
+		err = -1;
+		ERROR_AT ("colored device close");
 	}
-	close(fd_cc);
+	const int buf_size = 200; char buf[buf_size];
+	colored_device_name (buf, buf_size, area->dev);
+	if (unlink (buf) == -1) {
+		err = -1;
+		ERROR_AT ("colored device unlink (f=%s)", buf);
+	}
+
+	// destroy device file
+	ioctl_args io_args = {
+		.major = major (area->dev),
+		.minor = minor (area->dev)
+	};
+	if (ioctl (get_control_fd (), IOCTL_FREE, &io_args) == -1) {
+		err = -1;
+		ERROR_AT ("control device ioctl_free");
+	}
+
+	// remove from opened list
+	struct ccontrol_area * it = opened_areas;
+	struct ccontrol_area ** next_ptr = &opened_areas; 
+	while (it != NULL) {
+		if (it == area) {
+			*next_ptr = it->next;
+			break;
+		}
+		next_ptr = &it->next;
+		it = it->next;
+	}
+
+	free (area);
 	return err;
 }
 
-/* allocates memory inside the zone, use the freelist backend */
-void *ccontrol_malloc(struct ccontrol_zone *z, size_t size)
-{
-	if(z == NULL || z->p == NULL)
+/* area accessors */
+
+size_t ccontrol_area_size (struct ccontrol_area * area) {
+	if (area == NULL)
+		return 0;
+	else
+		return area->size;
+}
+void * ccontrol_area_start (struct ccontrol_area * area) {
+	if (area == NULL)
 		return NULL;
-	return fl_allocate(z->p,size);
+	else
+		return area->start;
+}
+int ccontrol_area_color_of (struct ccontrol_area * area, void * ptr) {
+	return -1; // TODO useful ?
 }
 
-void ccontrol_free(struct ccontrol_zone *z, void *ptr)
-{
-	if(z == NULL || z->p == NULL)
-		return;
-	fl_free(z->p,ptr);
-}
+/* malloc interface */
 
-void *ccontrol_realloc(struct ccontrol_zone *z, void *ptr, size_t size)
-{
-	if(z == NULL || z->p == NULL)
+void * ccontrol_malloc (struct ccontrol_area * area, size_t size) {
+	if(area == NULL)
 		return NULL;
-	return fl_realloc(z->p,ptr,size);
+	return fl_allocate (area->start, size);
 }
 
+void ccontrol_free (struct ccontrol_area * area, void * ptr) {
+	if(area == NULL)
+		return NULL;
+	fl_free (area->start, ptr);
+}
 
-int ccontrol_str2cset(color_set *c, char *str)
-{
+void * ccontrol_realloc (struct ccontrol_area * area, void * ptr, size_t size) {
+	if(area == NULL)
+		return NULL;
+	return fl_realloc (area->start, ptr, size);
+}
+
+/* Utils */
+
+int ccontrol_str2cset (color_set * c, char * str) {
 	unsigned long a,b;
-	if(str == NULL || c == NULL)
+	if (str == NULL || c == NULL)
 		return 1;
-	COLOR_ZERO(c);
+	COLOR_ZERO (c);
 	do {
-		if(!isdigit(*str))
+		if (!isdigit (*str))
 			return 1;
 		errno = 0;
-		b = a = strtoul(str,&str,0);
-		if(errno) return 1;
-		if(*str == '-') {
+		b = a = strtoul (str, &str, 0);
+		if (errno)
+			return 1;
+		if (*str == '-') {
 			str++;
-			if(!isdigit(*str))
+			if (!isdigit (*str))
 				return 1;
 			errno = 0;
-			b = strtoul(str,&str,0);
-			if(errno) return 1;
+			b = strtoul (str, &str, 0);
+			if (errno)
+				return 1;
 		}
-		if(a > b)
+		if (a > b)
 			return 1;
-		if(b >= COLOR_SETSIZE)
+		if (b >= COLOR_SETSIZE)
 			return 1;
-		while(a <= b) {
-			COLOR_SET(a,c);
+		while (a <= b) {
+			COLOR_SET (a, c);
 			a++;
 		}
-		if(*str == ',')
+		if (*str == ',')
 			str++;
-	} while(*str != '\0');
+	} while (*str != '\0');
 	return 0;
 }
 
-int ccontrol_str2size(size_t *s, char *str)
-{
+int ccontrol_str2size (size_t *s, char *str) {
 	char *endp;
 	unsigned long r;
 	if(s == NULL || str == NULL)
