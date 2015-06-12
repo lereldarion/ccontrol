@@ -695,7 +695,7 @@ void cleanup(void)
 	clean_pagetable();
 }
 
-static int __init init(void)
+static int __init ccontrol_init(void)
 {
 	int err = 0;
 	unsigned int blocks;
@@ -739,7 +739,7 @@ error:
 	return err;
 }
 
-static void __exit exit(void)
+static void __exit ccontrol_exit(void)
 {
 	cleanup();
 	printk("ccontrol: stopped !\n");
@@ -748,5 +748,5 @@ static void __exit exit(void)
 /* Kernel Macros
  */
 
-module_init(init);
-module_exit(exit);
+module_init(ccontrol_init);
+module_exit(ccontrol_exit);

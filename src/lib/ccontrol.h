@@ -43,28 +43,4 @@ size_t ccontrol_area_size (struct ccontrol_area * area);
 void * ccontrol_area_start (struct ccontrol_area * area);
 int ccontrol_area_color_of (struct ccontrol_area * area, void * ptr);
 
-/* malloc interface
- * Not thread safe !
- */
-void * ccontrol_malloc (struct ccontrol_area * area, size_t size);
-void ccontrol_free (struct ccontrol_area * area, void * ptr);
-void * ccontrol_realloc (struct ccontrol_area * area, void * ptr, size_t size);
-
-/* environment variables names */
-#define CCONTROL_ENV_PARTITION_COLORSET "CCONTROL_PSET"
-#define CCONTROL_ENV_SIZE "CCONTROL_SIZE"
-
-
-/* translate string to size
- * format is similar to kernel args : 1k 1M 1G
- * upper and lower cases work
- */
-int ccontrol_str2size (size_t *s, char *str);
-
-
-/* translate string to color_set
- * format is like cpusets : "1-4,5"
- */
-int ccontrol_str2cset (color_set * c, char * str);
-
 #endif /* CCONTROL_H */

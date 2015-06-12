@@ -8,7 +8,6 @@
  * Copyright (C) 2015 Francois Gindraud <francois.gindraud@inria.fr>
  */
 #include "ccontrol.h"
-#include "freelist.h"
 #include "ioctls.h"
 
 #include <fcntl.h>
@@ -112,9 +111,6 @@ struct ccontrol_area * ccontrol_create (size_t size, color_set * colors) {
 				// mmap colored device
 				area->start = mmap (NULL, area->size, PROT_READ | PROT_WRITE, MAP_SHARED, area->fd, 0); // FIXME private mapping ?
 				if (area->start != MAP_FAILED) {
-					// TODO remove
-					fl_init(area->start, size); // init freelist
-
 					// add to cleanup list
 					area->next = opened_areas;
 					opened_areas = area;
@@ -203,88 +199,5 @@ void * ccontrol_area_start (struct ccontrol_area * area) {
 }
 int ccontrol_area_color_of (struct ccontrol_area * area, void * ptr) {
 	return -1; // TODO useful ?
-}
-
-/* malloc interface */
-
-void * ccontrol_malloc (struct ccontrol_area * area, size_t size) {
-	if(area == NULL)
-		return NULL;
-	return fl_allocate (area->start, size);
-}
-
-void ccontrol_free (struct ccontrol_area * area, void * ptr) {
-	if(area == NULL)
-		return NULL;
-	fl_free (area->start, ptr);
-}
-
-void * ccontrol_realloc (struct ccontrol_area * area, void * ptr, size_t size) {
-	if(area == NULL)
-		return NULL;
-	return fl_realloc (area->start, ptr, size);
-}
-
-/* Utils */
-
-int ccontrol_str2cset (color_set * c, char * str) {
-	unsigned long a,b;
-	if (str == NULL || c == NULL)
-		return 1;
-	COLOR_ZERO (c);
-	do {
-		if (!isdigit (*str))
-			return 1;
-		errno = 0;
-		b = a = strtoul (str, &str, 0);
-		if (errno)
-			return 1;
-		if (*str == '-') {
-			str++;
-			if (!isdigit (*str))
-				return 1;
-			errno = 0;
-			b = strtoul (str, &str, 0);
-			if (errno)
-				return 1;
-		}
-		if (a > b)
-			return 1;
-		if (b >= COLOR_SETSIZE)
-			return 1;
-		while (a <= b) {
-			COLOR_SET (a, c);
-			a++;
-		}
-		if (*str == ',')
-			str++;
-	} while (*str != '\0');
-	return 0;
-}
-
-int ccontrol_str2size (size_t *s, char *str) {
-	char *endp;
-	unsigned long r;
-	if(s == NULL || str == NULL)
-		return 1;
-	errno = 0;
-	r = strtoul(str,&endp,0);
-	if(errno)
-		return errno;
-	switch(*endp) {
-		case 'g':
-		case 'G':
-			r<<=10;
-		case 'm':
-		case 'M':
-			r<<=10;
-		case 'k':
-		case 'K':
-			r<<=10;
-		default:
-			break;
-	}
-	*s = r;
-	return 0;
 }
 

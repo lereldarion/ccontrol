@@ -32,18 +32,45 @@
  */
 char *mem = "1M";
 char *size = "900K";
-char *cset = "1-32";
-int ask_ld = 0;
-int ask_noload = 0;
 int colors_seen = 0;
 
-static size_t cache_size;
-static unsigned long cache_assoc;
-static unsigned long numcolors;
+/* utils */
+
+static int str2size (size_t * s, char * str) {
+	char * endp;
+	unsigned long r;
+	if (s == NULL || str == NULL)
+		return 1;
+	errno = 0;
+	r = strtoul (str, &endp, 0);
+	if (errno)
+		return errno;
+	switch (*endp) {
+		case 'g':
+		case 'G':
+			r <<= 10;
+		case 'm':
+		case 'M':
+			r <<= 10;
+		case 'k':
+		case 'K':
+			r <<= 10;
+		default:
+			break;
+	}
+	*s = r;
+	return 0;
+}
+
+
 /* scan /sys/devices/system and open last index
  * get size, assoc
  * compute LL_NUM_COLORS
  */
+static size_t cache_size;
+static unsigned long cache_assoc;
+static unsigned long numcolors;
+
 #define SYSPATH "/sys/devices/system/cpu/cpu0/cache"
 static int scan_sys_cache_info(void)
 {
@@ -90,7 +117,7 @@ static int scan_sys_cache_info(void)
 		return -1;
 	}
 	fclose(f);
-	ccontrol_str2size(&cache_size,buf);
+	str2size(&cache_size,buf);
 	/* read ways_of_associativity */
 	f = fopen("ways_of_associativity","r");
 	if(f == NULL)
@@ -180,53 +207,6 @@ static int unload_module(void)
 	return WIFEXITED(status) && WEXITSTATUS(status);
 }
 
-static int exec_command(char **argv)
-{
-	int status;
-	pid_t pid;
-	if(ask_noload)
-		goto fork_command;
-
-	status = load_module();
-	if(status)
-		return status;
-
-fork_command:
-	/* we need to fork to execute modprobe */
-	pid = fork();
-	if(pid == -1)
-		return EXIT_FAILURE;
-
-	if(!pid)
-	{
-		if(ask_ld)
-		{
-			setenv("LD_PRELOAD",CCONTROL_LIB_PATH,1);
-			setenv(CCONTROL_ENV_SIZE,size,1);
-			setenv(CCONTROL_ENV_PARTITION_COLORSET,cset,1);
-		}
-		status = execvp(argv[1],&argv[1]);
-		perror("exec command");
-		exit(EXIT_FAILURE);
-	}
-	pid = waitpid(pid,&status,0);
-	if(pid == -1)
-	{
-		perror("waitpid");
-		return EXIT_FAILURE;
-	}
-	if(WIFEXITED(status))
-		printf("command exited with code: %d\n",WEXITSTATUS(status));
-	else
-		printf("command exited abnormaly\n");
-
-	status = 0;
-	if(!ask_noload)
-		status = unload_module();
-
-	return status;
-}
-
 static int cmd_info(void)
 {
 	int status;
@@ -255,15 +235,10 @@ void print_help()
 	printf("--help,-h               : print this help message\n");
 	printf("--version,-h            : print program version\n");
 	printf("--mem,-m <string>       : mem argument of the module\n");
-	printf("--size,-s <string>      : CCONTROL_SIZE value\n");
-	printf("--pset,-p <string>      : CCONTROL_PSET value\n");
 	printf("--colors,-c <uint>      : colors argument of the module value\n");
-	printf("--ld-preload,-l         : set LD_PRELOAD before exec\n");
-	printf("--no-load,-n            : don't load module before exec\n");
 	printf("Available commands:\n");
 	printf("load                    : load kernel module\n");
 	printf("unload                  : unload kernel module\n");
-	printf("exec <args>             : execute args\n");
 	printf("info                    : print cache information\n");
 }
 
@@ -271,11 +246,7 @@ void print_help()
 static struct option long_options[] = {
 	{ "help", no_argument, &ask_help, 1},
 	{ "version", no_argument, &ask_version, 1},
-	{ "ld-preload", no_argument, &ask_ld, 1},
-	{ "no-load", no_argument, &ask_noload, 1},
 	{ "mem", required_argument, NULL, 'm' },
-	{ "pset", required_argument, NULL, 'p' },
-	{ "size", required_argument, NULL, 's' },
 	{ "colors", required_argument, NULL, 'c' },
 	{ 0, 0 , 0, 0},
 };
@@ -311,23 +282,11 @@ int main(int argc, char *argv[])
 			case 'm':
 				mem = optarg;
 				break;
-			case 'p':
-				cset = optarg;
-				break;
-			case 'l':
-				ask_ld = 1;
-				break;
 			case 'h':
 				ask_help = 1;
 				break;
 			case 'V':
 				ask_version =1;
-				break;
-			case 'n':
-				ask_noload = 1;
-				break;
-			case 's':
-				size = optarg;
 				break;
 			default:
 				fprintf(stderr,
@@ -366,11 +325,6 @@ int main(int argc, char *argv[])
 	else if(!strcmp(argv[0],"unload"))
 	{
 		status = unload_module();
-		goto end;
-	}
-	else if (!strcmp(argv[0],"exec"))
-	{
-		status = exec_command(argv);
 		goto end;
 	}
 	status = EXIT_FAILURE;
