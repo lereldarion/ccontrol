@@ -4,37 +4,41 @@
  * published by the Free Software Foundation, version 2 of the
  * License.
  *
- * Copyright (C) 2010 Swann Perarnau
- * Author: Swann Perarnau <swann.perarnau@imag.fr>
+ * Copyright (C) 2010 Swann Perarnau <swann.perarnau@imag.fr>
+ * Copyright (C) 2015 Francois Gindraud <francois.gindraud@inria.fr>
  */
 
 /* ioctl codes availables in ccontrol:
- * IOCTL_NEW: creates a new device, given a size in pages and a colorset
- * IOCTL_FREE: destroy a device, its memory is given back to the kernel module.
+ * CCONTROL_IO_INFO: get info on module
+ * CCONTROL_IO_CONFIG: set area config (block cyclic coloring)
  */
 
 #ifndef IOCTLS_H
 #define IOCTLS_H
 
-#include<linux/ioctl.h>
+#include <linux/ioctl.h>
 
-/* ioctl needs a fixed major number, unfortunately */
-#define MAJOR_NUM 250
+/* ioctl fixed major number */
+#define CCONTROL_IO_MAGIC 250
 
-/* the data structure passed to ioctl:
- * - _new: contains size and colorset on input
- *         dev on output
- * - free: contains dev on input
- */
+struct cc_ioctl_info {
+	int nb_colors; // number of colors used in the module
+	int block_size; // size of a colored block in bytes
+	int color_list_size_max; // maximum size of color list in config ioctl
+};
 
-typedef struct cc_args {
-	int major;
-	int minor;
-	size_t size;
-	color_set c;
-} ioctl_args;
+struct cc_ioctl_config {
+	/* block cyclic coloring:
+	 * [color_list with color_repeat pages for each color] repeated list_repeat times
+	 */
+	int *color_list;
+	int nb_colors;
+	int color_repeat;
+	int list_repeat;
+};
 
-#define IOCTL_NEW _IOWR(MAJOR_NUM,0,ioctl_args *)
-#define IOCTL_FREE _IOR(MAJOR_NUM,0,ioctl_args *)
+#define CCONTROL_IO_INFO _IOW(CCONTROL_IO_MAGIC, 0, struct cc_ioctl_info *)
+#define CCONTROL_IO_CONFIG _IOR(CCONTROL_IO_MAGIC, 1, struct cc_ioctl_config *)
+#define CCONTROL_IO_NR 2
 
 #endif /* IOCTLS_H */

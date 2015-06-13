@@ -1,1 +1,1 @@
-pkginclude_HEADERS = colorset.h
+pkginclude_HEADERS = ioctls.h

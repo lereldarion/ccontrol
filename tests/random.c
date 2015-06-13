@@ -44,7 +44,6 @@ int main(int argc, char ** argv) {
 	char * t;
 	int i;
 	struct ccontrol_area * a;
-	color_set c;
 	if (argc != 2) {
 		fprintf (stderr, "usage: %s <sizein2**>\n", argv[0]);
 		exit (1);
@@ -59,15 +58,12 @@ int main(int argc, char ** argv) {
 	/*
 	 * allocate region 
 	 */
-	COLOR_ZERO (&c);
-	for (i = 0; i < 32; i++)
-		COLOR_SET (i, &c);
-
-	a = ccontrol_create (size, &c);
+	a = ccontrol_create (size);
 	assert(a == NULL);
 	t = ccontrol_area_start (a);
 	assert(t != NULL);
 	writes(t, accesses, size);
+	// TODO adapt or kill
 
 	ccontrol_destroy (a);
 	return 0;

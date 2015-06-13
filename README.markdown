@@ -106,28 +106,17 @@ Using CControl
 
 First, as root, load the kernel module:
 
-	ccontrol load --mem 1G
+	ccontrol load --max_mem 1G
 
-This will reserve 1 GB of RAM for ccontrol and initialize page coloring.
-You can look at `dmesg` for additional info.
+This will reserve 1 GB of RAM for ccontrol and initialize page coloring
+for the last level cache (LLC). You can look at `dmesg` for additional info.
+
+You can also use options --colors to manually set the number of colors
+to either an integer value, or to "Ln" for using autoconfiguration with the n-th
+level cache.
 
 If your application use the ccontrol library (linked with libccontrol),
-you're done. Otherwise, you can limit the total amount of cache used by
-_dynamically allocated data structures_ by using:
-
-	ccontrol exec --ld-preload ./myapp
-
-When using `LD_PRELOAD`, all standard memory allocation functions are
-redirected to a single cache partition, of which you must specify the
-size (in virtual memory) and the color set to use: corresponding
-options are `--pset` and `--size`.
-
-The `pset` option is a bitmask: a comma separated list of values.  For
-example `--pset=0,1,8-10` will activate colors 0,1,8,9 and 10.
-
-The `size` explains to ccontrol how much memory it should ask to the
-kernel module. This must be lower than the amount of RAM allocated and
-fit the amount of pages corresponding to the pset.
+it can now access the module and create areas.
 
 Once you're done with ccontrol, unload the module:
 
@@ -141,6 +130,8 @@ ccontrol, you can use:
 Library
 -------
 
+
+TODO
 The `libccontrol` provides a easy interface to the cache control
 facilities.  It works as a custom memory allocation library: you create
 a _zone_ by asking the kernel module for a set of colored pages. But

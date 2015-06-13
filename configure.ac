@@ -3,7 +3,7 @@ m4_include([version.m4])
 # init autoconf
 AC_INIT([ccontrol],[VERSION_NUMBER],[ccontrol-comits@ligforge.imag.fr])
 # are we in the right source dir ?
-AC_CONFIG_SRCDIR([src/commons/colorset.h])
+AC_CONFIG_SRCDIR([src/commons/ioctls.h])
 # build tools in separate dir
 AC_CONFIG_AUX_DIR([build-aux])
 # macro in srcdir/m4

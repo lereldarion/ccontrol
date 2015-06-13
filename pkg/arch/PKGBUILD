@@ -1,6 +1,6 @@
-# Maintainer: François Gindraud <francois.gindraud@gmail.com>
+# Maintainer: François Gindraud <francois.gindraud@inria.fr>
 pkgname='ccontrol-git'
-pkgver=r90.df20589
+pkgver=r91.aab6e6a
 pkgver() {
 	cd "$pkgname"
 	( set -o pipefail
