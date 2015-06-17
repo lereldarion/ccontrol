@@ -31,7 +31,7 @@
 #include <linux/cdev.h>
 #include <linux/device.h>
 
-#include "ioctls.h"
+#include "ccontrol_ioctl.h"
 
 /* ------------ Module params ---------------- */
 
@@ -96,7 +96,7 @@ struct memory_area {
 	 * It is initially non configured, and cannot be mmaped.
 	 * An ioctl config must be performed to configure its layout and allow mmap.
 	 */
-	struct cc_ioctl_config config; // contains color_list:kmalloc'ed
+	struct cc_layout config; // contains color_list:kmalloc'ed
 	struct page_storage store; // nb_pages==0 <=> pages==NULL ; contains pages:vmalloc'ed
 	int is_configured;
 	int vma_count;
@@ -324,7 +324,7 @@ static int cc_memory_destroy_area(struct memory_area *area)
 	return 0;
 }
 
-static int cc_memory_config_area(struct memory_area *area, struct cc_ioctl_config *config)
+static int cc_memory_config_area(struct memory_area *area, struct cc_layout *config)
 {
 	// TODO support reconfigure
 	int err = 0;
@@ -335,7 +335,7 @@ static int cc_memory_config_area(struct memory_area *area, struct cc_ioctl_confi
 	down_write(&area->sem);
 
 	if (area->is_configured) {
-		printk(KERN_DEBUG "ccontrol: area: reconfigure is unsupported\n");
+		printk(KERN_WARNING "ccontrol: area: reconfigure is unsupported\n");
 		err = -EPERM;
 		goto err_already_configured;
 	}
@@ -416,14 +416,14 @@ static int cc_device_release(struct inode *inode, struct file *filp)
 }
 
 // locks: nothing (only reads module data)
-static void cc_ioctl_info (struct cc_ioctl_info *info)
+static void cc_ioctl_info (struct cc_module_info *info)
 {
 	info->nb_colors = nb_colors;
 	info->block_size = PAGE_SIZE;
 	info->color_list_size_max = color_list_size_max;
 }
 
-static int cc_ioctl_config (struct cc_ioctl_config *config, struct file *filp)
+static int cc_ioctl_config (struct cc_layout *config, struct file *filp)
 {
 	return cc_memory_config_area(filp->private_data, config);
 }
@@ -432,8 +432,8 @@ static int cc_ioctl_config (struct cc_ioctl_config *config, struct file *filp)
 static long cc_device_ioctl(struct file *filp, unsigned int code, unsigned long val)
 {
 	void __user *arg = (void __user *) val;
-	struct cc_ioctl_info local_info;
-	struct cc_ioctl_config local_config;
+	struct cc_module_info local_info;
+	struct cc_layout local_config;
 	int err = 0;
 
 	if (_IOC_TYPE(code) != CCONTROL_IO_MAGIC) {
@@ -444,7 +444,7 @@ static long cc_device_ioctl(struct file *filp, unsigned int code, unsigned long 
 	switch (code) {
 		case CCONTROL_IO_INFO:
 			cc_ioctl_info (&local_info);
-			err = copy_to_user(arg, &local_info, sizeof(struct cc_ioctl_info));
+			err = copy_to_user(arg, &local_info, sizeof(struct cc_module_info));
 			break;
 		case CCONTROL_IO_CONFIG:
 			{
@@ -452,13 +452,13 @@ static long cc_device_ioctl(struct file *filp, unsigned int code, unsigned long 
 				size_t bytes;
 
 				// get config
-				err = copy_from_user(&local_config, arg, sizeof(struct cc_ioctl_config));
+				err = copy_from_user(&local_config, arg, sizeof(struct cc_layout));
 				if (err)
 					break;
 
 				// check config arguments
 				if (local_config.nb_colors < 1 || local_config.color_repeat < 1 || local_config.list_repeat < 1) {
-					printk(KERN_DEBUG "ccontrol: area: bad config {nb_color=%d, color_repeat=%d, list_repeat=%d}\n",
+					printk(KERN_WARNING "ccontrol: area: bad config {nb_color=%d, color_repeat=%d, list_repeat=%d}\n",
 							local_config.nb_colors, local_config.color_repeat, local_config.list_repeat);
 					err = -EINVAL;
 					break;
@@ -506,16 +506,14 @@ static int cc_vma_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 {
 	int err = 0;
 	struct memory_area *area = vma->vm_private_data;
-	// get the page offset in vma ; as mmap(offset) is forbidden, this is from the real start
-	size_t index = (size_t) vmf->pgoff;
+	// get the page offset in device
+	size_t index = vma->vm_pgoff + vmf->pgoff;
 
 	down_read(&area->sem);
 
 	if (index < area->store.nb_pages) {
 		vmf->page = area->store.pages[index];
 		get_page(vmf->page); // increase page ref count
-		printk(KERN_DEBUG "ccontrol: page fault at offset %zu (color=%d)\n",
-				index, pfn_to_color(page_to_pfn(vmf->page)));
 	} else {
 		printk(KERN_WARNING "ccontrol: page fault outside of area (%zu > %zu)\n",
 				index, area->store.nb_pages);
@@ -563,25 +561,20 @@ static int cc_device_mmap(struct file *filp, struct vm_area_struct *vma)
 
 	if (!area->is_configured) {
 		// Area must be configured before mapping
-		printk(KERN_DEBUG "ccontrol: area: cannot map if not configured\n");
+		printk(KERN_WARNING "ccontrol: area: cannot map if not configured\n");
 		err = -ENODEV;
 		goto err_bad_arg;
 	}
-	if (vma->vm_pgoff != 0) {
-		// Must mmap the entire area in a single time
-		printk(KERN_DEBUG "ccontrol: area: mmap offset must be 0\n");
-		err = -EPERM;
-		goto err_bad_arg;
-	}
-	if (size != area->store.nb_pages) {
-		printk(KERN_DEBUG "ccontrol: area: mmap size (%zu) does not match area size (%zu)\n",
-				size, area->store.nb_pages);
+	if (! (vma->vm_pgoff + size < area->store.nb_pages)) {
+		// Reject out of bounds mmaps
+		printk(KERN_WARNING "ccontrol: area: mmap [%zu, %zu[ out of bounds [0, %zu[\n",
+				vma->vm_pgoff, vma->vm_pgoff + size, area->store.nb_pages);
 		err = -EINVAL;
 		goto err_bad_arg;
 	}
 	if(!(vma->vm_flags & VM_SHARED)) {
 		// Only shared mapping are supported right now...
-		printk(KERN_ERR "ccontrol: area: only shared mappings are supported\n");
+		printk(KERN_WARNING "ccontrol: area: only shared mappings are supported\n");
 		err = -EPERM;
 		goto err_bad_arg;
 	}

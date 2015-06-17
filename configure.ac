@@ -3,7 +3,7 @@ m4_include([version.m4])
 # init autoconf
 AC_INIT([ccontrol],[VERSION_NUMBER],[ccontrol-comits@ligforge.imag.fr])
 # are we in the right source dir ?
-AC_CONFIG_SRCDIR([src/commons/ioctls.h])
+AC_CONFIG_SRCDIR([src/common/ccontrol_ioctl.h])
 # build tools in separate dir
 AC_CONFIG_AUX_DIR([build-aux])
 # macro in srcdir/m4
@@ -49,6 +49,6 @@ AC_SUBST([udevrulesdir],['${with_udevrulesdir}/rules.d'])
 # configuration output in config.h
 AC_CONFIG_HEADERS([config.h])
 # output makefiles
-AC_CONFIG_FILES([Makefile src/Makefile src/module/Makefile src/commons/Makefile src/lib/Makefile tests/Makefile src/utils/Makefile ccontrol.pc])
+AC_CONFIG_FILES([Makefile src/Makefile src/module/Makefile src/common/Makefile src/lib/Makefile tests/Makefile src/utils/Makefile ccontrol.pc])
 # do the output
 AC_OUTPUT

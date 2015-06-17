@@ -11,24 +11,18 @@
 #define CCONTROL_H 1
 
 #include <stdlib.h>
-#include "ioctls.h"
+#include "ccontrol_ioctl.h"
 
 /* CControl library: provides colored memory allocations.
  * Tighly coupled with its Linux kernel module (in case of errors,
  * check that the library and module are in sync).
- * Warning: this library is NOT thread-safe.
+ *
+ * TODO: new steps, for reconfig ?
+ * - create: open, ioctl-info
+ * - set-size: ioctl-set-size (one shot)
+ * - config-segment: ioctl-config-segment (layout, start, end)
+ * - destroy: close
  */
-
-/** Block cyclic layout.
- * Defined in ccontrol/ioctls.h
- * cc_layout.color_list must be allocated manually.
- */
-typedef struct cc_ioctl_config cc_layout;
-
-/** Ccontrol module info.
- * Defined in ccontrol/ioctls.h
- */
-typedef struct cc_ioctl_info cc_info;
 
 /**
  * Colored area description struct.
@@ -37,7 +31,7 @@ struct ccontrol_area {
 	int fd; /** Area file descriptor. */
 	void * start; /** mmaped region start. */
 	size_t size; /** area size. */
-	cc_info module_info; /** module info that will be filled at area creation. */
+	struct cc_module_info module_info; /** module info that will be filled at area creation. */
 };
 
 /**
@@ -51,7 +45,7 @@ struct ccontrol_area * ccontrol_create (void);
  * @param layout Layout description structure.
  * @return 0 on success, -1 on error + errno.
  */
-int ccontrol_configure (struct ccontrol_area * area, cc_layout * layout);
+int ccontrol_configure (struct ccontrol_area * area, struct cc_layout * layout);
 
 /** Destroys an area.
  * @param area An area.

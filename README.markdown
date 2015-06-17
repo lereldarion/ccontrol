@@ -130,56 +130,43 @@ ccontrol, you can use:
 Library
 -------
 
-
-TODO
 The `libccontrol` provides a easy interface to the cache control
 facilities.  It works as a custom memory allocation library: you create
-a _zone_ by asking the kernel module for a set of colored pages. But
-first, you need a bookkeeping structure:
+an _area_ by asking the kernel module for a set of colored pages.
 
 	ccontrol.h
 
-	/* allocates a zone */
-	struct ccontrol_zone * ccontrol_new(void);
+	/* allocates an area */
+	struct ccontrol_area * ccontrol_create (void);
 
-	/* frees a zone */
-	void ccontrol_delete(struct ccontrol_zone *);
+	/* configure an area and make its memory available */
+	int ccontrol_configure (struct ccontrol_area * area, struct cc_layout * layout);
 
-You then ask for zone creation:
+	/* accessing the memory */
+	char * buf = area->start;
+	size_t size_in_bytes = area->size;
 
-	/* Creates a new memory colored zone.
-	 * Needs a color set and a total size.
-	 * WARNING: the memory allocator needs space for itself, make
-	 * sure size is enough for him as well.
-	 * Return 0 on success. */
-	int ccontrol_create_zone(struct ccontrol_zone *, color_set *, size_t);
+	/* destroy an area */
+	void ccontrol_destroy (struct ccontrol_area * area);
 
-	/* Destroys a zone.
-	 * Any allocation done inside it will no longer work.
-	 */
-	int ccontrol_destroy_zone(struct ccontrol_zone *);
+Layout is a block cyclic layout:
 
-Then you allocate memory inside a zone:
+	ccontrol_types.h
+	
+	struct cc_layout {
+		int *color_list; // list of color to repeat
+		int nb_colors; // size of color list
+		int color_repeat; // size of each color block
+		int list_repeat; // number of list repetition
+	};
 
-	/* Allocates memory inside the zone. Similar to POSIX malloc
-	 */
-	void *ccontrol_malloc(struct ccontrol_zone *, size_t);
+After creation, an area contains some useful information (from the module) to
+help create the layout:
 
-	/* Frees memory from the zone. */
-	void ccontrol_free(struct ccontrol_zone *, void *);
-
-	/* realloc memory */
-	void *ccontrol_realloc(struct ccontrol_zone *, void *, size_t);
-
-The `color_set` structure is a bitmask indicating authorized colors:
-
-	colorset.h
-
-	color_set c;
-	COLOR_ZERO(&c);
-	COLOR_SET(1,&c);
-	COLOR_CLR(1,&c);
-	if(COLOR_ISSET(1,&c)) { }
+	struct cc_module_info * info = &area->module_info;
+	info->nb_colors; // number of colors in the module instance
+	info->block_size; // size of each color block in bytes (usally a page)
+	info->color_list_size_max; // maximum size of color list (can be changed in module parameters)
 
 Installing
 ---------
