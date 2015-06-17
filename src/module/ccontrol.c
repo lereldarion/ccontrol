@@ -147,7 +147,7 @@ static int cc_memory_init(size_t max_memory)
 {
 	int err = 0;
 	int c;
-	struct page **array_base;
+	char * buffer;
 
 	size_t sz_block;
 	size_t sz_allocated_blocks;
@@ -175,16 +175,18 @@ static int cc_memory_init(size_t max_memory)
 	sz_colored_page_storage_by_array = 2 * cc_mem.max_allocated_blocks * sizeof(struct page *);
 	sz_colored_page_storage_total = sz_pages_by_color_array + nb_colors * sz_colored_page_storage_by_array;
 
-	cc_mem.pages_by_color = cc_kvmalloc(sz_colored_page_storage_total);
-	if (cc_mem.pages_by_color == NULL) {
+	buffer = cc_kvmalloc(sz_colored_page_storage_total);
+	if (buffer == NULL) {
 		err = -ENOMEM;
 		goto err_pages_by_color_alloc;
 	}
-	array_base = (struct page **) &cc_mem.pages_by_color[nb_colors];
+	cc_mem.pages_by_color = (struct page_storage *) buffer;
+	buffer += sz_pages_by_color_array;
 	for (c = 0; c < nb_colors; ++c) {
 		struct page_storage *store = &cc_mem.pages_by_color[c];
 		store->nb_pages = 0;
-		store->pages = &array_base[c];
+		store->pages = (struct page **) buffer;
+		buffer += sz_colored_page_storage_by_array;
 	}
 
 	// print some structure size info
@@ -238,7 +240,8 @@ static int cc_memory_refill_storage(void);
 static void cc_memory_push_page(struct page *p)
 {
 	struct page_storage *store = &cc_mem.pages_by_color[pfn_to_color(page_to_pfn(p))];
-	store->pages[store->nb_pages++] = p;
+	store->pages[store->nb_pages] = p;
+	store->nb_pages++;
 }
 
 static int cc_memory_pop_page(struct page **p, int color)
@@ -249,7 +252,8 @@ static int cc_memory_pop_page(struct page **p, int color)
 		if (err < 0)
 			return err;
 	}
-	*p = store->pages[--store->nb_pages];
+	store->nb_pages--;
+	*p = store->pages[store->nb_pages];
 	return 0;
 }
 
@@ -258,7 +262,7 @@ static int cc_memory_refill_storage(void)
 	struct page *page;
 	int i;
 	if (cc_mem.nb_allocated_blocks == cc_mem.max_allocated_blocks) {
-		printk(KERN_WARNING "ccontrol: memory: reached max_mem limit\n");
+		printk(KERN_ERR "ccontrol: memory: reached max_mem limit\n");
 		return -ENOMEM;
 	}
 
@@ -363,7 +367,7 @@ static int cc_memory_config_area(struct memory_area *area, struct cc_layout *con
 	area->is_configured = 1;
 	up_write(&area->sem);
 
-	{
+	if (0) {
 		char sx;
 		size_t sz;
 		printk(KERN_DEBUG "ccontrol: area: configured with {nb_color=%d, color_repeat=%d, list_repeat=%d}, nb_pages=%zu\n",
@@ -448,6 +452,7 @@ static long cc_device_ioctl(struct file *filp, unsigned int code, unsigned long 
 			break;
 		case CCONTROL_IO_CONFIG:
 			{
+				int i;
 				int *config_color_list;
 				size_t bytes;
 
@@ -480,6 +485,13 @@ static long cc_device_ioctl(struct file *filp, unsigned int code, unsigned long 
 				err = copy_from_user(config_color_list, (int __user *) local_config.color_list, bytes);
 				if (err)
 					goto err_after_kmalloc;
+				for (i = 0; i < local_config.nb_colors; ++i) {
+					if (! (0 <= config_color_list[i] && config_color_list[i] < nb_colors)) {
+						printk(KERN_WARNING "ccontrol: color_list[%d]=%d is not an available color\n",
+								i, config_color_list[i]);
+						goto err_after_kmalloc;
+					}
+				}
 				local_config.color_list = config_color_list;
 
 				// ioctl (get ownership of kmalloced memory only on success)
@@ -515,8 +527,6 @@ static int cc_vma_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 		vmf->page = area->store.pages[index];
 		get_page(vmf->page); // increase page ref count
 	} else {
-		printk(KERN_WARNING "ccontrol: page fault outside of area (%zu > %zu)\n",
-				index, area->store.nb_pages);
 		err = VM_FAULT_ERROR;
 	}
 
@@ -539,8 +549,6 @@ static void cc_vma_close(struct vm_area_struct *vma)
 	struct memory_area *area = vma->vm_private_data;
 	down_write(&area->sem);
 	area->vma_count--;
-	if (area->vma_count == 0)
-		printk(KERN_DEBUG "ccontrol: area: vma destroyed\n");
 	up_write(&area->sem);
 }
 
@@ -565,7 +573,7 @@ static int cc_device_mmap(struct file *filp, struct vm_area_struct *vma)
 		err = -ENODEV;
 		goto err_bad_arg;
 	}
-	if (! (vma->vm_pgoff + size < area->store.nb_pages)) {
+	if (! (vma->vm_pgoff + size <= area->store.nb_pages)) {
 		// Reject out of bounds mmaps
 		printk(KERN_WARNING "ccontrol: area: mmap [%zu, %zu[ out of bounds [0, %zu[\n",
 				vma->vm_pgoff, vma->vm_pgoff + size, area->store.nb_pages);
@@ -583,9 +591,9 @@ static int cc_device_mmap(struct file *filp, struct vm_area_struct *vma)
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,7,0)
 	vma->vm_flags |= VM_RESERVED | VM_CAN_NONLINEAR; // flags from old implementation
 #else
-	vma->vm_flags |= VM_IO; // prevents mlock, merge, swap, .... (may break things)
+	vma->vm_flags |= VM_IO; // prevents mlock, merge, swap, that may break things
 #endif
-	vma->vm_flags |= VM_DONTEXPAND; // prevent mremap (fixed size phy area)
+	vma->vm_flags |= VM_DONTEXPAND; // prevent mremap
 	vma->vm_private_data = area;
 
 	area->vma_count++;

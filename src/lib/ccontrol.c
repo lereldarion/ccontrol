@@ -57,8 +57,7 @@ struct ccontrol_area * ccontrol_create (void) {
 }
 
 int ccontrol_configure (struct ccontrol_area * area, struct cc_layout * layout) {
-	if (0 && /* DEBUG FIXME */ area == NULL ||
-			layout == NULL || layout->color_list == NULL ||
+	if (area == NULL || layout == NULL || layout->color_list == NULL ||
 			layout->nb_colors < 1 || layout->color_repeat < 1 || layout->list_repeat < 1) {
 		errno = EINVAL;
 		return -1;

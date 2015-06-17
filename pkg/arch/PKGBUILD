@@ -1,6 +1,6 @@
 # Maintainer: François Gindraud <francois.gindraud@inria.fr>
 pkgname='ccontrol-git'
-pkgver=r92.dcf170e
+pkgver=r94.f2b2646
 pkgver() {
 	cd "$pkgname"
 	( set -o pipefail
@@ -31,5 +31,6 @@ build() {
 package() {
 	cd "${srcdir}/${pkgname}"
 	make DESTDIR="$pkgdir/" INSTALL_MOD_PATH="$pkgdir/usr" install
+	install -Dm644 "README.markdown" "$pkgdir/usr/share/doc/ccontrol/README"
 }
 
