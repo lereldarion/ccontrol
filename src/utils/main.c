@@ -126,7 +126,7 @@ static int scan_sys_cache_info (void) {
 
 	/* versionsort sort by index number */
 	struct dirent ** list;
-	int nb_dir = scandir (SYSPATH, &list, scandir_filter, versionsort);
+	int nb_dir = scandir (SYSPATH, &list, scandir_filter, alphasort);
 	if (nb_dir < 0) {
 		error (0, errno, "scandir(%s)", SYSPATH);
 		return -1;

@@ -4,6 +4,10 @@ Benchmarks
 This directory contains code snippets to demonstrate how ccontrol can be used
 to measure and optimize cache performance.
 
+Note: stencil.c and cache\_latency.c have not been adapted to the new ccontrol.
+cache-bandwidth.c is a small (badly designed) cache bandwidth experiment that
+is up to date with ccontrol itself.
+
 The exp.h file
 ==============
 
