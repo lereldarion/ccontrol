@@ -221,7 +221,7 @@ static int get_nb_color (void) {
 static int load_module (void) {
 	char argm[80], argc[80];
 	assert (snprintf (argm, 80, "max_mem=%s", arg_max_mem) > 0);
-	assert (snprintf (argc, 80, "nb_colors=%lu", get_nb_color ()) > 0);
+	assert (snprintf (argc, 80, "nb_colors=%d", get_nb_color ()) > 0);
 
 	printf ("Loading module using \"modprobe ccontrol %s %s\"\n", argm, argc);
 	if (execlp ("modprobe", "modprobe", "ccontrol", argm, argc, NULL) < 0)
